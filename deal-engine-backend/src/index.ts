@@ -1,3 +1,4 @@
+import NodeCache from 'node-cache';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -9,27 +10,16 @@ import axios from 'axios';
 dotenv.config();
 
 const app = express();
+const cache = new NodeCache({ stdTTL: 3600 });
 const PORT = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Configurar multer para la subida de archivos
 const upload = multer({ dest: 'uploads/' });
 
-// Ruta de prueba
-app.get('/', (req: Request, res: Response) => {
-    res.send('Deal Engine Weather API');
-});
-
-// Ruta para procesar el archivo CSV y generar el informe
 app.post('/weather-report', upload.single('file'), async (req: Request, res: Response) => {
     const filePath = req.file?.path;
-
-    console.log('Received a request at /weather-report');
-    console.log('Uploaded file path:', filePath);
-
     if (!filePath) {
         return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -40,34 +30,48 @@ app.post('/weather-report', upload.single('file'), async (req: Request, res: Res
     fs.createReadStream(filePath)
         .pipe(csv())
         .on('data', (row) => {
-            const { origin_iata_code, destination_iata_code, origin_name, destination_name } = row;
+            const cacheKeyOrigin = `${row.origin_latitude}-${row.origin_longitude}`;
+            const cacheKeyDestination = `${row.destination_latitude}-${row.destination_longitude}`;
 
             fetchWeatherPromises.push(
                 (async () => {
                     try {
-                        const [originWeatherResponse, destinationWeatherResponse] = await Promise.all([
-                            axios.get('https://api.openweathermap.org/data/2.5/weather', {
+                        let originWeather, destinationWeather;
+
+                        if (cache.has(cacheKeyOrigin)) {
+                            originWeather = cache.get(cacheKeyOrigin);
+                        } else {
+                            const originWeatherResponse = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
                                 params: {
                                     appid: process.env.WEATHER_API_KEY,
                                     lat: row.origin_latitude,
                                     lon: row.origin_longitude,
                                     units: 'metric'
                                 }
-                            }),
-                            axios.get('https://api.openweathermap.org/data/2.5/weather', {
+                            });
+                            originWeather = originWeatherResponse.data.main.temp;
+                            cache.set(cacheKeyOrigin, originWeather);
+                        }
+
+                        if (cache.has(cacheKeyDestination)) {
+                            destinationWeather = cache.get(cacheKeyDestination);
+                        } else {
+                            const destinationWeatherResponse = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
                                 params: {
                                     appid: process.env.WEATHER_API_KEY,
                                     lat: row.destination_latitude,
                                     lon: row.destination_longitude,
                                     units: 'metric'
                                 }
-                            })
-                        ]);
+                            });
+                            destinationWeather = destinationWeatherResponse.data.main.temp;
+                            cache.set(cacheKeyDestination, destinationWeather);
+                        }
 
                         report.push({
                             ...row,
-                            originWeather: originWeatherResponse.data.main.temp,
-                            destinationWeather: destinationWeatherResponse.data.main.temp
+                            originWeather,
+                            destinationWeather
                         });
 
                     } catch (error) {
@@ -77,9 +81,8 @@ app.post('/weather-report', upload.single('file'), async (req: Request, res: Res
             );
         })
         .on('end', async () => {
-            await Promise.all(fetchWeatherPromises); // Asegúrate de que todas las promesas se resuelvan
-            fs.unlinkSync(filePath); // Eliminar el archivo después de procesarlo
-            console.log('Final report:', report);
+            await Promise.all(fetchWeatherPromises);
+            fs.unlinkSync(filePath);
             res.json({ report });
         })
         .on('error', (err) => {
