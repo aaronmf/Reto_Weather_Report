@@ -7,6 +7,10 @@ const App: React.FC = () => {
   const [report, setReport] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'none' | 'menu' | 'report' | 'sql'>();
+  const [submit, setSubmit] = useState<string>('view')
+  const [sqlQuery, setSqlQuery] = useState<string>('');
+  const [sqlResult, setSqlResult] = useState<any[]>([]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -18,6 +22,7 @@ const App: React.FC = () => {
     e.preventDefault();
     if (!file) {
       alert("Please upload a CSV file");
+      setView('none')
       return;
     }
 
@@ -33,7 +38,7 @@ const App: React.FC = () => {
           'Content-Type': 'multipart/form-data'
         }
       });
-      console.log('Response from server:', response); 
+      console.log('Response from server:', response);
       setReport(response.data.report);
     } catch (error) {
       console.error("Error fetching weather data", error);
@@ -43,36 +48,73 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSqlQuery = async () => {
+    if (!sqlQuery.trim()) {
+      alert('Please enter a SQL query');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await axios.post('http://localhost:5000/sql-query', { query: sqlQuery });
+      setSqlResult(response.data);
+      setView('sql');
+    } catch (error) {
+      console.error("Error executing SQL query", error);
+      setError('Error al ejecutar consulta SQL');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div>
-    <Container className="border mt-5 rounded p-3">
-      <Row className="my-4">
-        <Col>
-          <h2>Reporte de clima</h2>
-          <Form onSubmit={handleSubmit}>
-            <Form.Group controlId="formFile" className="mb-3">
-              <Form.Label>Carga el archivo CDV para generar el reporte</Form.Label>
-              <Form.Control type="file" accept=".csv" onChange={handleFileChange} />
-            </Form.Group>
-            <Button variant="primary" type="submit" disabled={loading}>
-              {loading ? 'Uploading...' : 'Cargar'}
-            </Button>
-          </Form>
-        </Col>
-      </Row>
+      {submit === 'view' && (
+        <Container className="border mt-5 rounded p-3">
+          <Row className="my-4">
+            <Col>
+              <h2>Reporte de clima</h2>
+              <Form onSubmit={handleSubmit}>
+                <Form.Group controlId="formFile" className="mb-3">
+                  <Form.Label>Carga el archivo CDV para generar el reporte</Form.Label>
+                  <Form.Control type="file" accept=".csv" onChange={handleFileChange} />
+                </Form.Group>
+                <Button variant="primary" type="submit" disabled={loading} onClick={() => { setView('menu') }}>
+                  {loading ? 'Uploading...' : 'Cargar'}
+                </Button>
+              </Form>
+            </Col>
+          </Row>
 
-      {error && (
-        <Row>
-          <Col>
-            <div className="alert alert-danger" role="alert">
-              {error}
-            </div>
-          </Col>
-        </Row>
+          {error && (
+            <Row>
+              <Col>
+                <div className="alert alert-danger" role="alert">
+                  {error}
+                </div>
+              </Col>
+            </Row>
+          )}
+        </Container>
       )}
-      </Container>
-      <Container fluid>
-      {report.length > 0 && (
+      {view === 'menu' && file && (
+        <Container className="border rounded">
+          <Row className="my-4 p-3">
+            <Col>
+              <Button variant="primary" onClick={() => { setView('report'); setSubmit('null') }} className="me-2">
+                Mostrar reporte
+              </Button>
+              <Button variant="primary" onClick={() => { setView('sql'); setSubmit('null') }} className="me-2">
+                Realizar consulta SQL
+              </Button>
+            </Col>
+          </Row>
+        </Container>
+      )}
+
+      {view === 'report' && report.length > 0 && (
         <Container fluid className="mt-5">
           <Card className="mx-auto" style={{ width: '100%' }}>
             <Card.Header as="h5" className="text-center">Informe de clima para viajeros</Card.Header>
@@ -128,10 +170,44 @@ const App: React.FC = () => {
                 </Table>
               </div>
             </Card.Body>
+            <Card.Footer className="justify-content-center">
+              <Col xs="auto" className="text-center">
+                <Button variant="primary" onClick={() => { setView('menu'); setSubmit('view') }} className="btn-lg">
+                  Atras
+                </Button>
+              </Col>
+            </Card.Footer>
           </Card>
         </Container>
       )}
-    </Container>
+
+      {view === 'sql' && (
+        <Container className="border mt-5 rounded p-3">
+          <Row className="my-4">
+            <Col>
+              <h2>Consulta SQL</h2>
+              <Form onSubmit={(e) => { e.preventDefault(); handleSqlQuery(); }}>
+                <Form.Group controlId="sqlQuery">
+                  <Form.Label>Introduce tu consulta SQL</Form.Label>
+                  <Form.Control
+                    as="textarea"
+                    rows={3}
+                    value={sqlQuery}
+                    onChange={(e) => setSqlQuery(e.target.value)}
+                  />
+                </Form.Group>
+                <Button className='me-3 my-3' variant="primary" type="submit" disabled={loading}>
+                  {loading ? 'Consultando...' : 'Consultar'}
+                </Button>
+                <Button variant="primary" onClick={() => { setView('menu'); setSubmit('view') }}>
+                  Atras
+                </Button>
+              </Form>
+            </Col>
+          </Row>
+        </Container>
+      )}
+
     </div>
   );
 };
